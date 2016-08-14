@@ -141,6 +141,8 @@ public class GsmServiceStateTracker extends ServiceStateTracker {
 
     /** Boolean is true is setTimeFromNITZString was called */
     private boolean mNitzUpdatedTime = false;
+    /** Time stamp after 19 January 2038 is not supported under 32 bit */
+    private static final int MAX_NITZ_YEAR = 2037;
 
     String mSavedTimeZone;
     long mSavedTime;
@@ -575,7 +577,7 @@ public class GsmServiceStateTracker extends ServiceStateTracker {
             mPhone.mCT.mForegroundCall.hangupIfAlive();
         }
 
-        mCi.setRadioPower(false, null);
+        mCi.setRadioPower(false, obtainMessage(EVENT_RADIO_POWER_OFF_DONE));
     }
 
     @Override
@@ -837,14 +839,17 @@ public class GsmServiceStateTracker extends ServiceStateTracker {
                             regState = Integer.parseInt(states[0]);
 
                             // states[3] (if present) is the current radio technology
-                            if (states.length >= 4 && states[3] != null) {
+                            if (states.length >= 4 && states[3] != null &&
+                                    !"null".equals(states[3])) {
                                 type = Integer.parseInt(states[3]);
                             }
                             if ((states.length >= 5 ) &&
-                                    (regState == ServiceState.RIL_REG_STATE_DENIED)) {
+                                    (regState == ServiceState.RIL_REG_STATE_DENIED) &&
+                                    !"null".equals(states[4])) {
                                 mNewReasonDataDenied = Integer.parseInt(states[4]);
                             }
-                            if (states.length >= 6) {
+                            if (states.length >= 6 && states[5] != null &&
+                                    !"null".equals(states[5])) {
                                 mNewMaxDataCalls = Integer.parseInt(states[5]);
                             }
                         } catch (NumberFormatException ex) {
@@ -1660,8 +1665,15 @@ public class GsmServiceStateTracker extends ServiceStateTracker {
      */
     private boolean isOperatorConsideredNonRoaming(ServiceState s) {
         String operatorNumeric = s.getOperatorNumeric();
-        String[] numericArray = mPhone.getContext().getResources().getStringArray(
+        String[] numericArray;
+        int subId = mPhone.getSubId();
+        if (subId >= 0) {
+            numericArray = SubscriptionManager.getResourcesForSubId(mPhone.getContext(),subId)
+                 .getStringArray(com.android.internal.R.array.config_operatorConsideredNonRoaming);
+        } else {
+            numericArray = mPhone.getContext().getResources().getStringArray(
                     com.android.internal.R.array.config_operatorConsideredNonRoaming);
+        }
 
         if (numericArray.length == 0 || operatorNumeric == null) {
             return false;
@@ -1677,8 +1689,16 @@ public class GsmServiceStateTracker extends ServiceStateTracker {
 
     private boolean isOperatorConsideredRoaming(ServiceState s) {
         String operatorNumeric = s.getOperatorNumeric();
-        String[] numericArray = mPhone.getContext().getResources().getStringArray(
+        String[] numericArray;
+        int subId = mPhone.getSubId();
+        if (subId >= 0) {
+            numericArray = SubscriptionManager.getResourcesForSubId(mPhone.getContext(),subId)
+                .getStringArray(
                     com.android.internal.R.array.config_sameNamedOperatorConsideredRoaming);
+        } else {
+            numericArray = mPhone.getContext().getResources().getStringArray(
+                    com.android.internal.R.array.config_sameNamedOperatorConsideredRoaming);
+        }
 
         if (numericArray.length == 0 || operatorNumeric == null) {
             return false;
@@ -1808,6 +1828,10 @@ public class GsmServiceStateTracker extends ServiceStateTracker {
             String[] nitzSubs = nitz.split("[/:,+-]");
 
             int year = 2000 + Integer.parseInt(nitzSubs[0]);
+            if (year > MAX_NITZ_YEAR) {
+              if (DBG) loge("NITZ year: " + year + " exceeds limit, skip NITZ time update");
+              return;
+            }
             c.set(Calendar.YEAR, year);
 
             // month is 0 based!
